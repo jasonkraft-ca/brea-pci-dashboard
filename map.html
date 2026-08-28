@@ -128,6 +128,17 @@
   .mlink:hover{background:var(--navy-2);}
   .mnote{font-size:11.5px;color:var(--ink-dim);margin-top:11px;line-height:1.5;}
 
+  .maptools{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:11px;}
+  .maptools .lbl{font-family:'Roboto Mono',monospace;font-size:9.5px;text-transform:uppercase;
+    letter-spacing:.6px;color:var(--ink-dim);margin-right:2px;}
+  .mkey{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin:10px 0 12px;
+    font-family:'Roboto Mono',monospace;font-size:10.5px;color:var(--ink-dim);}
+  .mkey .k{display:inline-flex;align-items:center;gap:5px;}
+  .mkey .k i{width:15px;height:9px;border-radius:2px;display:inline-block;}
+  .lhead span{cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:3px;}
+  .lhead span:hover{color:var(--navy);}
+  .lhead span.on{color:var(--navy);font-weight:700;}
+  .lhead .ar{font-size:8px;opacity:.85;}
   .listwrap{max-height:280px;overflow-y:auto;border:1px solid var(--panel-line);border-radius:6px;}
   .lrow{display:grid;grid-template-columns:1fr 150px 52px 92px;gap:10px;align-items:center;
     padding:8px 13px;border-bottom:1px solid var(--panel-line);font-size:12.5px;cursor:pointer;}
@@ -204,6 +215,13 @@
 
   <div class="panel">
     <p class="panel-title">Map</p>
+    <div class="maptools">
+      <span class="lbl">Colour streets by</span>
+      <div class="seg">
+        <button class="btn on" id="cCond">Condition</button>
+        <button class="btn" id="cYear">Year scheduled</button>
+      </div>
+    </div>
     <div class="stage">
       <div class="ctl">
         <button id="zin" title="Zoom in">+</button>
@@ -214,7 +232,8 @@
       <div class="tip" id="tip"></div>
       <div class="nogeo" id="nogeo"></div>
     </div>
-    <div class="lhead"><span>Street</span><span>Location</span><span>PCI</span><span>Planned</span></div>
+    <div class="mkey" id="mkey"></div>
+    <div class="lhead" id="lhead"><span data-s="n">Street<i class="ar"></i></span><span data-s="loc">Location<i class="ar"></i></span><span data-s="p">PCI<i class="ar"></i></span><span data-s="fy">Planned<i class="ar"></i></span></div>
     <div class="listwrap"><div id="list"></div></div>
     <div class="count-note" id="countNote"></div>
     <p class="foot">Streets are drawn from OpenStreetMap centrelines matched to the City's pavement
@@ -239,6 +258,23 @@ const BANDS=[
   {key:'good',  min:86, max:100,label:'Good',         range:'86–100',color:'#1f7a4d'}
 ];
 const bandOf = p => BANDS.find(b=>p<=b.max) || BANDS[4];
+
+// Sequential purple ramp for the schedule view - deliberately nothing like the
+// red-to-green condition scale, so the two colourings can never be confused.
+// Darker = sooner. Unscheduled is a neutral grey, outside the sequence.
+const YEARS=[
+  {fy:'2025-26',color:'#3f007d'},
+  {fy:'2026-27',color:'#4f1590'},
+  {fy:'2027-28',color:'#62309f'},
+  {fy:'2028-29',color:'#7549ae'},
+  {fy:'2029-30',color:'#8a65bd'},
+  {fy:'2030-31',color:'#9e82cb'},
+  {fy:'2031-32',color:'#b39fd8'}
+];
+const NOT_SCHEDULED_COLOR='#bfc5cb';
+const yearColor = fy => { const y=YEARS.find(x=>x.fy===fy); return y?y.color:NOT_SCHEDULED_COLOR; };
+// colour a street under the active mode
+const colorOf = s => state.color==='year' ? yearColor(s.fy) : bandOf(s.p).color;
 const S = DATA.streets;
 
 // plain-language description of each treatment, matching the list dashboard
@@ -281,7 +317,8 @@ const fmtArea=a=>!a?'—':a>=1e6?(a/1e6).toFixed(1)+'M sqft':a>=1e3?Math.round(a
 const mapsUrl=n=>'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(n+', Brea, CA');
 
 // ---------- filter state ----------
-const state={ q:'', treat:'all', fy:'all', bands:new Set(BANDS.map(b=>b.key)), view:'streets', sel:null };
+const state={ q:'', treat:'all', fy:'all', bands:new Set(BANDS.map(b=>b.key)), view:'streets',
+  sel:null, color:'condition', sort:{key:'p', dir:1} };
 
 function matches(s){
   if(!state.bands.has(bandOf(s.p).key)) return false;
@@ -508,20 +545,36 @@ function drawHeat(rows){
     if(!s.g) return;
     let n=0; s.g.forEach(l=>n+=l.length);
     const wgt=(s.a||1000)/Math.max(1,n);
+    const yi=YEARS.findIndex(y=>y.fy===s.fy);
     s.g.forEach(l=>l.forEach(pt=>{
       const q=PX(pt), k=Math.floor(q[0]/CELL)+','+Math.floor(q[1]/CELL);
-      let c=cells.get(k); if(!c){c={sw:0,sp:0,n:0};cells.set(k,c);}
+      let c=cells.get(k); if(!c){c={sw:0,sp:0,n:0,soonest:99};cells.set(k,c);}
       c.sw+=wgt; c.sp+=s.p*wgt; c.n++;
+      if(yi>=0 && yi<c.soonest) c.soonest=yi;    // earliest year of work in this cell
     }));
   });
   cells.forEach((c,k)=>{
     if(c.n<3) return;
     const [cx,cy]=k.split(',').map(Number);
-    const b=bandOf(c.sp/c.sw);
-    const r=el('rect',{x:(cx*CELL).toFixed(3),y:(cy*CELL).toFixed(3),
-      width:CELL.toFixed(3),height:CELL.toFixed(3),fill:b.color,'fill-opacity':.68});
-    gHeat.appendChild(r);
+    const fill = state.color==='year'
+      ? (c.soonest<99 ? YEARS[c.soonest].color : NOT_SCHEDULED_COLOR)
+      : bandOf(c.sp/c.sw).color;
+    gHeat.appendChild(el('rect',{x:(cx*CELL).toFixed(3),y:(cy*CELL).toFixed(3),
+      width:CELL.toFixed(3),height:CELL.toFixed(3),fill,'fill-opacity':.68}));
   });
+}
+
+// ---------- colour key under the map ----------
+function renderKey(){
+  const k=document.getElementById('mkey');
+  const items = state.color==='year'
+    ? YEARS.map(y=>[y.color,'FY '+y.fy]).concat([[NOT_SCHEDULED_COLOR,'Not scheduled']])
+    : BANDS.map(b=>[b.color,b.label+' '+b.range]);
+  const note = state.color==='year'
+    ? (state.view==='heat' ? 'cell shows the earliest year of work' : 'darker = sooner')
+    : (state.view==='heat' ? 'cell shows area-weighted average PCI' : 'StreetSaver 0–100 scale');
+  k.innerHTML = items.map(([c,l])=>`<span class="k"><i style="background:${c}"></i>${l}</span>`).join('')
+    + `<span style="margin-left:auto;opacity:.8">${note}</span>`;
 }
 
 // ---------- render ----------
@@ -533,14 +586,14 @@ function render(){
   S.forEach(s=>{
     const rec=paths.get(s.n); if(!rec) return;
     const on=shown.has(s.n), selHere=state.sel===s.n;
-    const b=bandOf(s.p);
+    const col=colorOf(s);
     rec.arr.forEach(p=>{
       if(state.view==='heat'){
         p.setAttribute('stroke','#b9c4ce');
         p.setAttribute('stroke-opacity', on?.35:.12);
         p.setAttribute('stroke-width',(rec.w*.7).toFixed(3));
       } else {
-        p.setAttribute('stroke', selHere?'#12241a':(on?b.color:'#d3dae1'));
+        p.setAttribute('stroke', selHere?'#12241a':(on?col:'#d3dae1'));
         p.setAttribute('stroke-opacity', on?1:.5);
         p.setAttribute('stroke-width',(selHere?rec.w*2.6:rec.w).toFixed(3));
       }
@@ -565,15 +618,14 @@ function render(){
   document.querySelectorAll('.chip').forEach(c=>
     c.classList.toggle('off', !state.bands.has(c.dataset.b)));
 
-  // list
+  // list - every matching street, in the chosen sort order
   const list=document.getElementById('list');
   if(!rows.length){ list.innerHTML='<div class="empty">No streets match these filters.</div>'; }
   else{
-    const sorted=[...rows].sort((a,b)=>a.p-b.p);
-    list.innerHTML=sorted.slice(0,400).map(s=>{
-      const b=bandOf(s.p);
+    list.innerHTML=sortRows(rows).map(s=>{
+      const b=bandOf(s.p), col=colorOf(s);
       return `<div class="lrow${state.sel===s.n?' sel':''}" data-n="${s.n.replace(/"/g,'&quot;')}"
-        style="${state.sel===s.n?'background:#eef4f0;box-shadow:inset 3px 0 0 '+b.color:''}">
+        style="${state.sel===s.n?'background:#eef4f0;box-shadow:inset 3px 0 0 '+col:''}">
         <div class="nm">${s.n}</div>
         <div class="lc">${s.loc||'—'}</div>
         <div class="pc" style="color:${b.color}">${s.p.toFixed(0)}</div>
@@ -581,11 +633,12 @@ function render(){
     }).join('');
     list.querySelectorAll('.lrow').forEach(r=>r.onclick=()=>select(r.dataset.n));
   }
+  renderKey();
+  syncHead();
 
   const missing=rows.filter(r=>!r.g).length;
-  document.getElementById('countNote').textContent = rows.length > 400
-    ? `Listing the worst 400 of ${rows.length} matching streets`
-    : `Showing ${rows.length} of ${S.length} streets · sorted worst first`;
+  document.getElementById('countNote').textContent =
+    `Showing all ${rows.length} of ${S.length} streets · sorted by ${SORT_LABEL[state.sort.key]}`;
   document.getElementById('nogeo').textContent = missing
     ? `${missing} of ${rows.length} matching streets have no map geometry and are not drawn — they appear in the list below.`
     : `All ${rows.length} matching streets are drawn on the map.`;
@@ -602,6 +655,39 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape' && document.getElementById('backdrop').classList.contains('on')) closeDetail();
 });
 
+const SORT_LABEL={n:'street name', loc:'location', p:'PCI', fy:'year scheduled'};
+function sortRows(rows){
+  const {key,dir}=state.sort;
+  const cmp={
+    n:(a,b)=>a.n.localeCompare(b.n),
+    loc:(a,b)=>(a.loc||'\uffff').localeCompare(b.loc||'\uffff'),   // blanks last
+    p:(a,b)=>a.p-b.p,
+    fy:(a,b)=>(a.fy||'9999').localeCompare(b.fy||'9999')            // unscheduled last
+  }[key];
+  return [...rows].sort((a,b)=>{ const v=cmp(a,b); return (v||a.n.localeCompare(b.n))*dir; });
+}
+function syncHead(){
+  document.querySelectorAll('#lhead span').forEach(sp=>{
+    const on=sp.dataset.s===state.sort.key;
+    sp.classList.toggle('on',on);
+    sp.querySelector('.ar').textContent = on ? (state.sort.dir===1?'▲':'▼') : '';
+  });
+}
+document.querySelectorAll('#lhead span').forEach(sp=>{
+  sp.onclick=()=>{
+    const k=sp.dataset.s;
+    if(state.sort.key===k) state.sort.dir*=-1;
+    else state.sort={key:k, dir:1};
+    render();
+  };
+});
+document.getElementById('cCond').onclick=()=>{ state.color='condition';
+  document.getElementById('cCond').classList.add('on');
+  document.getElementById('cYear').classList.remove('on'); render(); };
+document.getElementById('cYear').onclick=()=>{ state.color='year';
+  document.getElementById('cYear').classList.add('on');
+  document.getElementById('cCond').classList.remove('on'); render(); };
+
 document.getElementById('search').addEventListener('input',e=>{state.q=e.target.value.toLowerCase().trim();render();});
 document.getElementById('treat').addEventListener('change',e=>{state.treat=e.target.value;render();});
 document.getElementById('fy').addEventListener('change',e=>{state.fy=e.target.value;render();});
@@ -615,6 +701,9 @@ document.getElementById('reset').onclick=()=>{
   document.getElementById('search').value='';
   document.getElementById('treat').value='all';
   document.getElementById('fy').value='all';
+  state.color='condition'; state.sort={key:'p',dir:1};
+  document.getElementById('cCond').classList.add('on');
+  document.getElementById('cYear').classList.remove('on');
   vb={...BOX};applyVb();render();
 };
 
