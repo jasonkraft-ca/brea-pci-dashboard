@@ -209,7 +209,7 @@
       </div>
     </div>
     <div class="bandrow" id="bandrow">
-      <span class="hint">Condition — click to toggle</span>
+      <span class="hint">Condition — click to isolate · ⌘/Ctrl-click to add</span>
     </div>
   </div>
 
@@ -318,7 +318,7 @@ const mapsUrl=n=>'https://www.google.com/maps/search/?api=1&query='+encodeURICom
 
 // ---------- filter state ----------
 const state={ q:'', treat:'all', fy:'all', bands:new Set(BANDS.map(b=>b.key)), view:'streets',
-  sel:null, color:'condition', sort:{key:'p', dir:1} };
+  sel:null, color:'condition', sort:{key:'fy', dir:1} };
 
 function matches(s){
   if(!state.bands.has(bandOf(s.p).key)) return false;
@@ -345,9 +345,17 @@ function matches(s){
     const c=document.createElement('span');
     c.className='chip'; c.dataset.b=b.key;
     c.innerHTML=`<i class="sw" style="background:${b.color}"></i>${b.label} <span class="ct">${b.range}</span>`;
-    c.onclick=()=>{
-      if(state.bands.has(b.key)) state.bands.delete(b.key); else state.bands.add(b.key);
-      if(!state.bands.size) BANDS.forEach(x=>state.bands.add(x.key)); // never blank the map
+    c.onclick=(e)=>{
+      const multi = e.metaKey || e.ctrlKey || e.shiftKey;
+      if(multi){
+        // add or remove this band, keeping the rest of the selection
+        if(state.bands.has(b.key)) state.bands.delete(b.key); else state.bands.add(b.key);
+        if(!state.bands.size) BANDS.forEach(x=>state.bands.add(x.key)); // never blank the map
+      } else if(state.bands.size===1 && state.bands.has(b.key)){
+        BANDS.forEach(x=>state.bands.add(x.key));   // already alone: clicking again shows all
+      } else {
+        state.bands.clear(); state.bands.add(b.key); // plain click isolates this band
+      }
       render();
     };
     br.appendChild(c);
@@ -701,7 +709,7 @@ document.getElementById('reset').onclick=()=>{
   document.getElementById('search').value='';
   document.getElementById('treat').value='all';
   document.getElementById('fy').value='all';
-  state.color='condition'; state.sort={key:'p',dir:1};
+  state.color='condition'; state.sort={key:'fy',dir:1};
   document.getElementById('cCond').classList.add('on');
   document.getElementById('cYear').classList.remove('on');
   vb={...BOX};applyVb();render();
