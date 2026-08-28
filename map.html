@@ -330,6 +330,10 @@ DATA.corridors.forEach(c=>c.lines.forEach(l=>gCorr.appendChild(el('path',{
 svg.appendChild(gCorr);
 const gHeat=el('g',{'clip-path':'url(#cp)'}); svg.appendChild(gHeat);
 const gStreet=el('g',{'clip-path':'url(#cp)'}); svg.appendChild(gStreet);
+// Transparent fat strokes sit above the visible ones purely to catch pointer
+// events: the drawn streets are only 1-3 screen px wide and are near-impossible
+// to hit. non-scaling-stroke keeps this ~8px wide at every zoom level.
+const gHit=el('g',{'clip-path':'url(#cp)'}); svg.appendChild(gHit);
 const gLbl=el('g',{}); svg.appendChild(gLbl);
 DATA.corridors.forEach(c=>{
   let best=null; c.lines.forEach(l=>{if(!best||l.length>best.length)best=l;});
@@ -346,13 +350,18 @@ S.forEach(s=>{
   const w=Math.max(.10,Math.min(.30,Math.sqrt(s.a||4000)/520));
   const arr=s.g.map(l=>{
     const p=el('path',{d:pathOf(l),fill:'none','stroke-width':w.toFixed(3),
-      'stroke-linecap':'round','stroke-linejoin':'round'});
-    p.style.cursor='pointer';
-    p.addEventListener('pointerenter',e=>showTip(e,s));
-    p.addEventListener('pointermove',e=>showTip(e,s));
-    p.addEventListener('pointerleave',hideTip);
-    p.addEventListener('click',()=>select(s.n));
+      'stroke-linecap':'round','stroke-linejoin':'round','pointer-events':'none'});
     gStreet.appendChild(p);
+
+    const hit=el('path',{d:pathOf(l),fill:'none',stroke:'#000','stroke-opacity':'0',
+      'stroke-width':'8','stroke-linecap':'round','stroke-linejoin':'round',
+      'pointer-events':'stroke','vector-effect':'non-scaling-stroke'});
+    hit.style.cursor='pointer';
+    hit.addEventListener('pointerenter',e=>showTip(e,s));
+    hit.addEventListener('pointermove',e=>showTip(e,s));
+    hit.addEventListener('pointerleave',hideTip);
+    hit.addEventListener('click',()=>{ if(!justDragged) select(s.n); });
+    gHit.appendChild(hit);
     return p;
   });
   paths.set(s.n,{w,arr});
@@ -385,15 +394,36 @@ svg.addEventListener('wheel',e=>{
   const r=svg.getBoundingClientRect();
   zoom(e.deltaY>0?1.15:.87, vb.x+(e.clientX-r.left)/r.width*vb.w, vb.y+(e.clientY-r.top)/r.height*vb.h);
 },{passive:false});
-let drag=null;
-svg.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,vx:vb.x,vy:vb.y};svg.setPointerCapture(e.pointerId);});
+let drag=null, justDragged=false;
+const DRAG_SLOP=4;   // px of movement before this counts as a pan, not a click
+svg.addEventListener('pointerdown',e=>{
+  drag={x:e.clientX,y:e.clientY,vx:vb.x,vy:vb.y,id:e.pointerId,moved:false};
+});
 svg.addEventListener('pointermove',e=>{
   if(!drag)return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+  if(!drag.moved){
+    if(Math.hypot(dx,dy)<DRAG_SLOP) return;
+    drag.moved=true;
+    // Capture only now. Capturing on pointerdown would retarget the click to the
+    // <svg>, so a street's own click handler would never fire.
+    try{ svg.setPointerCapture(drag.id); }catch(err){}
+  }
   const r=svg.getBoundingClientRect();
-  vb.x=drag.vx-(e.clientX-drag.x)/r.width*vb.w;
-  vb.y=drag.vy-(e.clientY-drag.y)/r.height*vb.h; applyVb();
+  vb.x=drag.vx-dx/r.width*vb.w;
+  vb.y=drag.vy-dy/r.height*vb.h; applyVb();
 });
-svg.addEventListener('pointerup',()=>drag=null);
+function endDrag(){
+  if(!drag) return;
+  if(drag.moved){
+    justDragged=true;                       // don't let the pan turn into a click
+    setTimeout(()=>{justDragged=false;},0);
+    try{ svg.releasePointerCapture(drag.id); }catch(err){}
+  }
+  drag=null;
+}
+svg.addEventListener('pointerup',endDrag);
+svg.addEventListener('pointercancel',endDrag);
 document.getElementById('zin').onclick=()=>zoom(.75,vb.x+vb.w/2,vb.y+vb.h/2);
 document.getElementById('zout').onclick=()=>zoom(1.33,vb.x+vb.w/2,vb.y+vb.h/2);
 document.getElementById('zreset').onclick=()=>{vb={...BOX};applyVb();};
