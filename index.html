@@ -57,6 +57,26 @@
     font-family:'Public Sans', sans-serif;
     font-size:13px;
   }
+  .header-right{
+    display:flex;
+    flex-direction:column;
+    align-items:flex-end;
+    gap:8px;
+  }
+  .header a.map-link{
+    font-family:'Roboto Mono', monospace;
+    font-weight:700;
+    font-size:12px;
+    background:var(--stripe);
+    color:#2b2107;
+    padding:7px 13px;
+    border-radius:4px;
+    text-decoration:none;
+    white-space:nowrap;
+  }
+  .header a.map-link:hover{
+    background:#e0ae38;
+  }
   .route-tag{
     font-family:'Roboto Mono', monospace;
     font-weight:700;
@@ -487,7 +507,10 @@
       <h1>Brea Streets Dashboard: Pavement Condition Index</h1>
       <p>City of Brea · 2025 Citywide Pavement Management Plan · Complete Street Listing</p>
     </div>
-    <div class="route-tag">533 STREETS SURVEYED</div>
+    <div class="header-right">
+      <a class="map-link" href="map.html">▦ Map view</a>
+      <div class="route-tag">533 STREETS SURVEYED</div>
+    </div>
   </div>
 
   <div class="stats" id="stats"></div>
