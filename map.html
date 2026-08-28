@@ -501,7 +501,7 @@ function animateTo(target,ms){
 // Frame one street. Keeps a floor on the extent so a short cul-de-sac does not
 // zoom to a meaningless close-up, and matches the stage aspect so the street is
 // never cropped by the viewBox letterboxing.
-const MIN_EXTENT=3.5;   // projected units, ~390 m across
+const MIN_EXTENT=7;   // projected units, ~780 m across
 function zoomToStreet(name){
   const s=S.find(x=>x.n===name);
   if(!s||!s.g||!s.g.length) return false;
@@ -512,8 +512,8 @@ function zoomToStreet(name){
   if(mnx>mxx) return false;
   const r=svg.getBoundingClientRect();
   const aspect=(r.width>0&&r.height>0) ? r.width/r.height : BOX.w/BOX.h;
-  let w=Math.max((mxx-mnx)*1.7, MIN_EXTENT);
-  let h=Math.max((mxy-mny)*1.7, MIN_EXTENT/aspect);
+  let w=Math.max((mxx-mnx)*2.4, MIN_EXTENT);
+  let h=Math.max((mxy-mny)*2.4, MIN_EXTENT/aspect);
   if(w/h < aspect) w=h*aspect; else h=w/aspect;
   const cx=(mnx+mxx)/2, cy=(mny+mxy)/2;
   animateTo({x:cx-w/2, y:cy-h/2, w, h});
