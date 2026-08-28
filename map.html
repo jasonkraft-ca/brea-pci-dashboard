@@ -443,13 +443,14 @@ function zoom(f,cx,cy){
   vb={x:cx-(cx-vb.x)*f, y:cy-(cy-vb.y)*f, w:vb.w*f, h:vb.h*f}; applyVb();
 }
 svg.addEventListener('wheel',e=>{
-  e.preventDefault();
+  e.preventDefault(); cancelAnim();
   const r=svg.getBoundingClientRect();
   zoom(e.deltaY>0?1.15:.87, vb.x+(e.clientX-r.left)/r.width*vb.w, vb.y+(e.clientY-r.top)/r.height*vb.h);
 },{passive:false});
 let drag=null, justDragged=false;
 const DRAG_SLOP=4;   // px of movement before this counts as a pan, not a click
 svg.addEventListener('pointerdown',e=>{
+  cancelAnim();   // a drag takes over from any running fly-to
   drag={x:e.clientX,y:e.clientY,vx:vb.x,vy:vb.y,id:e.pointerId,moved:false};
 });
 svg.addEventListener('pointermove',e=>{
@@ -479,12 +480,51 @@ svg.addEventListener('pointerup',endDrag);
 svg.addEventListener('pointercancel',endDrag);
 document.getElementById('zin').onclick=()=>zoom(.75,vb.x+vb.w/2,vb.y+vb.h/2);
 document.getElementById('zout').onclick=()=>zoom(1.33,vb.x+vb.w/2,vb.y+vb.h/2);
-document.getElementById('zreset').onclick=()=>{vb={...BOX};applyVb();};
+document.getElementById('zreset').onclick=()=>{cancelAnim();vb={...BOX};applyVb();};
+
+// ---------- animated framing ----------
+let animId=null;
+function cancelAnim(){ if(animId!==null){ cancelAnimationFrame(animId); animId=null; } }
+function animateTo(target,ms){
+  cancelAnim();
+  const from={...vb}, t0=performance.now(), D=ms||380;
+  const ease=k=> k<.5 ? 2*k*k : 1-Math.pow(-2*k+2,2)/2;
+  const step=now=>{
+    const k=Math.min(1,(now-t0)/D), e=ease(k);
+    vb={ x:from.x+(target.x-from.x)*e, y:from.y+(target.y-from.y)*e,
+         w:from.w+(target.w-from.w)*e, h:from.h+(target.h-from.h)*e };
+    applyVb();
+    animId = k<1 ? requestAnimationFrame(step) : null;
+  };
+  animId=requestAnimationFrame(step);
+}
+// Frame one street. Keeps a floor on the extent so a short cul-de-sac does not
+// zoom to a meaningless close-up, and matches the stage aspect so the street is
+// never cropped by the viewBox letterboxing.
+const MIN_EXTENT=3.5;   // projected units, ~390 m across
+function zoomToStreet(name){
+  const s=S.find(x=>x.n===name);
+  if(!s||!s.g||!s.g.length) return false;
+  let mnx=1e9,mxx=-1e9,mny=1e9,mxy=-1e9;
+  s.g.forEach(l=>l.forEach(pt=>{ const q=PX(pt);
+    mnx=Math.min(mnx,q[0]); mxx=Math.max(mxx,q[0]);
+    mny=Math.min(mny,q[1]); mxy=Math.max(mxy,q[1]); }));
+  if(mnx>mxx) return false;
+  const r=svg.getBoundingClientRect();
+  const aspect=(r.width>0&&r.height>0) ? r.width/r.height : BOX.w/BOX.h;
+  let w=Math.max((mxx-mnx)*1.7, MIN_EXTENT);
+  let h=Math.max((mxy-mny)*1.7, MIN_EXTENT/aspect);
+  if(w/h < aspect) w=h*aspect; else h=w/aspect;
+  const cx=(mnx+mxx)/2, cy=(mny+mxy)/2;
+  animateTo({x:cx-w/2, y:cy-h/2, w, h});
+  return true;
+}
 
 // ---------- selection ----------
-function select(name){
+function select(name, opts){
   state.sel = name;
   render();
+  if(opts && opts.zoom && name) zoomToStreet(name);
   if(state.sel){
     const row=document.querySelector(`.lrow[data-n="${CSS.escape(state.sel)}"]`);
     if(row) row.scrollIntoView({block:'nearest'});
@@ -649,7 +689,7 @@ function render(){
         <div class="pc" style="color:${b.color}">${s.p.toFixed(0)}</div>
         <div class="fyc">${s.fy||'—'}</div></div>`;
     }).join('');
-    list.querySelectorAll('.lrow').forEach(r=>r.onclick=()=>select(r.dataset.n));
+    list.querySelectorAll('.lrow').forEach(r=>r.onclick=()=>select(r.dataset.n,{zoom:true}));
   }
   renderKey();
   syncHead();
