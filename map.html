@@ -193,10 +193,6 @@
         <select id="treat"><option value="all">All treatments</option></select>
       </div>
       <div class="fgroup">
-        <label for="fy">Year worked on</label>
-        <select id="fy"><option value="all">All years</option></select>
-      </div>
-      <div class="fgroup">
         <label>Map style</label>
         <div class="seg">
           <button class="btn on" id="vStreets">Streets</button>
@@ -209,7 +205,10 @@
       </div>
     </div>
     <div class="bandrow" id="bandrow">
-      <span class="hint">Condition — click to isolate · ⌘/Ctrl-click to add</span>
+      <span class="hint">Condition — click to isolate, click more to add</span>
+    </div>
+    <div class="bandrow" id="yearrow">
+      <span class="hint">Year worked on — click to isolate, click more to add</span>
     </div>
   </div>
 
@@ -317,48 +316,57 @@ const fmtArea=a=>!a?'—':a>=1e6?(a/1e6).toFixed(1)+'M sqft':a>=1e3?Math.round(a
 const mapsUrl=n=>'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(n+', Brea, CA');
 
 // ---------- filter state ----------
-const state={ q:'', treat:'all', fy:'all', bands:new Set(BANDS.map(b=>b.key)), view:'streets',
+const YEAR_KEYS=[...YEARS.map(y=>y.fy),'none'];
+const state={ q:'', treat:'all', bands:new Set(BANDS.map(b=>b.key)),
+  years:new Set(YEAR_KEYS), view:'streets',
   sel:null, color:'condition', sort:{key:'fy', dir:1} };
 
+// a street may be scheduled across several years; it matches if any of them is on
+const yearsOf = s => s.fy ? ((s.fys && s.fys.length) ? s.fys : [s.fy]) : ['none'];
 function matches(s){
   if(!state.bands.has(bandOf(s.p).key)) return false;
   if(state.q && !s.n.toLowerCase().includes(state.q)) return false;
   if(state.treat!=='all' && s.t!==state.treat) return false;
-  if(state.fy!=='all'){
-    if(state.fy==='none'){ if(s.fy) return false; }
-    else if(!(s.fys? s.fys.includes(state.fy) : s.fy===state.fy)) return false;
-  }
+  if(!yearsOf(s).some(y=>state.years.has(y))) return false;
   return true;
 }
 
 // ---------- build controls ----------
+// One gesture for both chip rows: from "everything on" a click isolates that
+// chip; after that a click adds or removes one, so a second click shows both.
+// Removing the last remaining chip restores them all rather than blanking.
+function chipToggle(set, allKeys, key){
+  const isAll = allKeys.every(k=>set.has(k));
+  if(isAll){ set.clear(); set.add(key); }
+  else if(set.has(key)){
+    set.delete(key);
+    if(!set.size) allKeys.forEach(k=>set.add(k));
+  } else set.add(key);
+}
 (function(){
   const t=document.getElementById('treat');
   [...new Set(S.map(s=>s.t).filter(Boolean))].sort().forEach(v=>{
     const o=document.createElement('option'); o.value=v; o.textContent=v; t.appendChild(o);});
-  const f=document.getElementById('fy');
-  [...new Set(S.map(s=>s.fy).filter(Boolean))].sort().forEach(v=>{
-    const o=document.createElement('option'); o.value=v; o.textContent='FY '+v; f.appendChild(o);});
-  const o=document.createElement('option'); o.value='none'; o.textContent='Not yet scheduled'; f.appendChild(o);
+
   const br=document.getElementById('bandrow');
   BANDS.forEach(b=>{
     const c=document.createElement('span');
     c.className='chip'; c.dataset.b=b.key;
     c.innerHTML=`<i class="sw" style="background:${b.color}"></i>${b.label} <span class="ct">${b.range}</span>`;
-    c.onclick=(e)=>{
-      const multi = e.metaKey || e.ctrlKey || e.shiftKey;
-      if(multi){
-        // add or remove this band, keeping the rest of the selection
-        if(state.bands.has(b.key)) state.bands.delete(b.key); else state.bands.add(b.key);
-        if(!state.bands.size) BANDS.forEach(x=>state.bands.add(x.key)); // never blank the map
-      } else if(state.bands.size===1 && state.bands.has(b.key)){
-        BANDS.forEach(x=>state.bands.add(x.key));   // already alone: clicking again shows all
-      } else {
-        state.bands.clear(); state.bands.add(b.key); // plain click isolates this band
-      }
-      render();
-    };
+    c.onclick=()=>{ chipToggle(state.bands, BANDS.map(x=>x.key), b.key); render(); };
     br.appendChild(c);
+  });
+
+  const yr=document.getElementById('yearrow');
+  YEAR_KEYS.forEach(k=>{
+    const y=YEARS.find(x=>x.fy===k);
+    const col=y?y.color:NOT_SCHEDULED_COLOR;
+    const label=y?('FY '+y.fy):'Not scheduled';
+    const c=document.createElement('span');
+    c.className='chip'; c.dataset.y=k;
+    c.innerHTML=`<i class="sw" style="background:${col}"></i>${label}`;
+    c.onclick=()=>{ chipToggle(state.years, YEAR_KEYS, k); render(); };
+    yr.appendChild(c);
   });
 })();
 
@@ -622,9 +630,11 @@ function render(){
     [fmtCost(cost)||'$0','Scheduled cost in selection']
   ].map(([n,l])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
 
-  // band chips
-  document.querySelectorAll('.chip').forEach(c=>
+  // chip rows
+  document.querySelectorAll('#bandrow .chip').forEach(c=>
     c.classList.toggle('off', !state.bands.has(c.dataset.b)));
+  document.querySelectorAll('#yearrow .chip').forEach(c=>
+    c.classList.toggle('off', !state.years.has(c.dataset.y)));
 
   // list - every matching street, in the chosen sort order
   const list=document.getElementById('list');
@@ -698,17 +708,16 @@ document.getElementById('cYear').onclick=()=>{ state.color='year';
 
 document.getElementById('search').addEventListener('input',e=>{state.q=e.target.value.toLowerCase().trim();render();});
 document.getElementById('treat').addEventListener('change',e=>{state.treat=e.target.value;render();});
-document.getElementById('fy').addEventListener('change',e=>{state.fy=e.target.value;render();});
 document.getElementById('vStreets').onclick=()=>{state.view='streets';
   document.getElementById('vStreets').classList.add('on');document.getElementById('vHeat').classList.remove('on');render();};
 document.getElementById('vHeat').onclick=()=>{state.view='heat';
   document.getElementById('vHeat').classList.add('on');document.getElementById('vStreets').classList.remove('on');render();};
 document.getElementById('reset').onclick=()=>{
-  state.q='';state.treat='all';state.fy='all';state.sel=null;
+  state.q='';state.treat='all';state.sel=null;
   BANDS.forEach(b=>state.bands.add(b.key));
+  YEAR_KEYS.forEach(k=>state.years.add(k));
   document.getElementById('search').value='';
   document.getElementById('treat').value='all';
-  document.getElementById('fy').value='all';
   state.color='condition'; state.sort={key:'fy',dir:1};
   document.getElementById('cCond').classList.add('on');
   document.getElementById('cYear').classList.remove('on');
